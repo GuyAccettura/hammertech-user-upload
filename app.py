@@ -4,15 +4,26 @@ import openpyxl
 from datetime import datetime
 import io
 
-AUTH_ENDPOINT = "https://us-auth.hammertechonline.com/api/login/generatetoken"
-API_BASE = "https://us-api.hammertechonline.com/api/v1"
-USER_ENDPOINT = f"{API_BASE}/workerprofiles"
-PROJECT_ENDPOINT = f"{API_BASE}/projects"
+# --------- REGION-BASED ENDPOINTS ---------
+def get_endpoints(region: str):
+    """Return auth endpoint and API base (with /api/v1) for the selected region."""
+    if region == "North America":
+        auth = "https://us-auth.hammertechonline.com/api/login/generatetoken"
+        api_base = "https://us-api.hammertechonline.com/api/v1"
+    elif region == "Asia/Australia/NZ":
+        auth = "https://au-auth.hammertechonline.com/api/login/generatetoken"
+        api_base = "https://au-api.hammertechonline.com/api/v1"
+    else:  # Europe/UK
+        auth = "https://eu-auth.hammertechonline.com/api/login/generatetoken"
+        api_base = "https://eu-api.hammertechonline.com/api/v1"
 
-def get_token(email, password, tenant):
+    return auth, api_base
+
+
+def get_token(auth_endpoint, email, password, tenant):
     headers = {"accept": "application/json", "Content-Type": "application/json"}
     body = {"email": email, "password": password, "tenant": tenant}
-    r = requests.post(AUTH_ENDPOINT, headers=headers, json=body)
+    r = requests.post(auth_endpoint, headers=headers, json=body)
     r.raise_for_status()
     data = r.json()
     if "token" not in data:
@@ -20,12 +31,12 @@ def get_token(email, password, tenant):
     return data["token"]
 
 
-def post_to_api(token, payload, upload_type: str):
-    """Send either worker or project payload to the correct endpoint."""
+def post_to_api(token, payload, upload_type: str, user_endpoint: str, project_endpoint: str):
+    """Send either user or project payload to the correct endpoint."""
     if upload_type == "Users":
-        endpoint = USER_ENDPOINT
+        endpoint = user_endpoint
     else:
-        endpoint = PROJECT_ENDPOINT
+        endpoint = project_endpoint
 
     headers = {"Authorization": "Bearer " + token}
     r = requests.post(endpoint, headers=headers, json=payload)
@@ -42,7 +53,21 @@ will create **users** or **projects** via the HammerTech API.
 """
 )
 
-# --- Credentials ---
+# ----------------- REGION SELECTION -----------------
+st.header("Region")
+region = st.selectbox(
+    "Select your HammerTech region",
+    ["North America", "Asia/Australia/NZ", "Europe/UK"],
+)
+st.caption(
+    "This controls which auth and API endpoints are used (US, AU, or EU environments)."
+)
+
+auth_endpoint, api_base = get_endpoints(region)
+USER_ENDPOINT = f"{api_base}/workerprofiles"
+PROJECT_ENDPOINT = f"{api_base}/projects"
+
+# ----------------- UPLOAD TYPE -----------------
 st.header("Upload Type")
 upload_type = st.selectbox("What do you want to upload?", ["Users", "Projects"])
 
@@ -54,11 +79,11 @@ if upload_type == "Users":
 else:
     st.info(
         "You selected **Projects**. Expected columns (in order): "
-        "`ProjectName`, `siteAddress`, `timeZoneString`, `state`, `internalid`, `regionId`."
+        "`ProjectName`, `Country`, `siteAddress`, `timeZoneString`, `state`, `internalid`, `regionId`."
     )
 
 # ----------------- CREDENTIALS -----------------
-st.header("API Credentials")   
+st.header("API Credentials")
 col1, col2 = st.columns(2)
 
 with col1:
@@ -68,25 +93,27 @@ with col1:
 with col2:
     password = st.text_input("Password", type="password")
 
-# --- File + sheet settings ---
+# ----------------- FILE + SHEET -----------------
 st.header("Excel File")
 
 with st.expander("Upload Templates"):
     st.write(
-        "Download the needed template, fill in the user details, "
+        "Download the needed template, fill it in, "
         "and then upload it below."
     )
+    # User template
     try:
         with open("userUploadTemplate.xlsx", "rb") as f:
             st.download_button(
-                label="Download user template",
+                label="Download User Upload Template",
                 data=f,
                 file_name="userUploadTemplate.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
     except FileNotFoundError:
-        st.error("Template file not found on the server. Please contact the administrator.")
-    
+        st.error("User template file not found on the server. Please contact the administrator.")
+
+    # Project template
     try:
         with open("projectUploadTemplate.xlsx", "rb") as f:
             st.download_button(
@@ -98,7 +125,6 @@ with st.expander("Upload Templates"):
     except FileNotFoundError:
         st.error("Project template file not found on the server. Please contact the administrator.")
 
-
 uploaded_file = st.file_uploader("Choose Excel file", type=["xlsx", "xlsm"])
 sheet_name = st.text_input("Sheet name")
 start_row = st.number_input(
@@ -109,14 +135,15 @@ start_row = st.number_input(
 
 run_button = st.button("Run Upload")
 
+# ----------------- MAIN LOGIC -----------------
 if run_button:
     if not (email and password and tenant and uploaded_file and sheet_name):
         st.error("Please fill in all fields and upload a file.")
     else:
         # Authenticate
         try:
-            with st.spinner("Authenticating with HammerTech..."):
-                token = get_token(email, password, tenant)
+            with st.spinner(f"Authenticating with HammerTech ({region})..."):
+                token = get_token(auth_endpoint, email, password, tenant)
             st.success("Authentication successful.")
         except Exception as e:
             st.error(f"Authentication failed: {e}")
@@ -148,41 +175,51 @@ if run_button:
         progress_bar = st.progress(0)
         log_area = st.empty()
 
+        # ------------- USERS UPLOAD FLOW -------------
         if upload_type == "Users":
             for i, row in enumerate(rows, start=1):
                 if i < start_row:
                     continue
 
-                email = row[0]
+                email_cell = row[0]
                 name = row[1]
                 mobile = row[2]
                 title = row[3]
-                role_name = ["safetymanager"]
                 internalIdentifier = row[4]
                 user_project_ids = row[5]
 
-                if email is None:
+                if email_cell is None:
                     # Skip empty row
                     continue
 
                 mobile_str = str(mobile) if mobile is not None else ""
-                internalIdentifier_str = str(internalIdentifier) if internalIdentifier is not None else ""
+                internalIdentifier_str = (
+                    str(internalIdentifier) if internalIdentifier is not None else ""
+                )
+
+                # roleNames as a list, project IDs as a list (if present)
+                role_names = ["safetymanager"]
+                user_project_ids_list = (
+                    [user_project_ids] if user_project_ids is not None else []
+                )
 
                 payload = {
                     "name": name or "",
                     "title": title or "",
                     "mobile": mobile_str,
-                    "email": email or "",
+                    "email": email_cell or "",
                     "internalIdentifier": internalIdentifier_str,
-                    "roleNames": role_name or "",
-                    "userProjectIds": [user_project_ids] or ""
+                    "roleNames": role_names,
+                    "userProjectIds": user_project_ids_list,
                 }
 
                 row_count += 1
-                logs.append(f"Row {i}: Sending worker {name}...")
+                logs.append(f"Row {i}: Sending user {name}...")
 
                 try:
-                    status_code, response_text = post_worker(token, payload)
+                    status_code, response_text = post_to_api(
+                        token, payload, upload_type, USER_ENDPOINT, PROJECT_ENDPOINT
+                    )
                     if 200 <= status_code < 300:
                         logs.append(f"Row {i}: ✅ Success (HTTP {status_code}).")
                         success_count += 1
@@ -192,13 +229,13 @@ if run_button:
                         )
                         fail_count += 1
                 except Exception as e:
-                    logs.append(f"Row {i}: ❌ Error sending worker: {e}")
+                    logs.append(f"Row {i}: ❌ Error sending user: {e}")
                     fail_count += 1
 
                 # Update UI
                 progress_bar.progress(min(i / total_rows, 1.0))
                 log_area.text("\n".join(logs[-20:]))
-        
+
         # ------------- PROJECTS UPLOAD FLOW -------------
         else:  # upload_type == "Projects"
             for i, row in enumerate(rows, start=1):
@@ -260,7 +297,7 @@ if run_button:
                         {
                             "dayOfWeek": "Tuesday",
                             "startTime": "07:00:00",
-                            "endTime": "17:00:00"
+                            "EndTime": "17:00:00"
                         }
                     ]
                 }
@@ -269,7 +306,9 @@ if run_button:
                 logs.append(f"Row {i}: Sending project {ProjectName}...")
 
                 try:
-                    status_code, response_text = post_to_api(token, payload, upload_type)
+                    status_code, response_text = post_to_api(
+                        token, payload, upload_type, USER_ENDPOINT, PROJECT_ENDPOINT
+                    )
                     if 200 <= status_code < 300:
                         logs.append(f"Row {i}: ✅ Success (HTTP {status_code}).")
                         success_count += 1
