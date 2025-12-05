@@ -49,6 +49,23 @@ with col2:
 # --- File + sheet settings ---
 st.header("Excel File")
 
+with st.expander("User Upload Template"):
+    st.write(
+        "Download this Excel template, fill in the user details, "
+        "and then upload it below."
+    )
+    try:
+        with open("userUploadTemplate.xlsx", "rb") as f:
+            st.download_button(
+                label="Download user template",
+                data=f,
+                file_name="userUploadTemplate.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+    except FileNotFoundError:
+        st.error("Template file not found on the server. Please contact the administrator.")
+
+
 uploaded_file = st.file_uploader("Choose Excel file", type=["xlsx", "xlsm"])
 sheet_name = st.text_input("Sheet name")
 start_row = st.number_input(
