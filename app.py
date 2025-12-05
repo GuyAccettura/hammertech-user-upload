@@ -137,7 +137,7 @@ if run_button:
         progress_bar = st.progress(0)
         log_area = st.empty()
 
-        if upload_type = "Users"
+        if upload_type == "Users"
             for i, row in enumerate(rows, start=1):
                 if i < start_row:
                     continue
