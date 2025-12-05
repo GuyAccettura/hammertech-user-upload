@@ -195,14 +195,15 @@ if run_button:
                     continue
 
                 ProjectName = row[0]
-                siteAddress = row[1]
-                timeZoneString = row[2]
-                state = row[3]
-                internalid = row[4]
-                regionId = row[5]
+                country = row[1]
+                siteAddress = row[2]
+                timeZoneString = row[3]
+                state = row[4]
+                internalid = row[5]
+                regionId = row[6]
 
                 # skip completely empty rows
-                if not any([ProjectName, siteAddress, timeZoneString, state, internalid, regionId]):
+                if not any([ProjectName, country, siteAddress, timeZoneString, state, internalid, regionId]):
                     continue
 
                 payload = {
@@ -212,7 +213,7 @@ if run_button:
                     "regionId": regionId,
                     "state": state,
                     "timeZoneString": timeZoneString,
-                    "country": "Canada",
+                    "country": country,
                     "internalIdentifier": internalid,
                     "siteTiming": [
                         {
