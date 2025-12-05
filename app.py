@@ -71,9 +71,9 @@ with col2:
 # --- File + sheet settings ---
 st.header("Excel File")
 
-with st.expander("User Upload Template"):
+with st.expander("Upload Templates"):
     st.write(
-        "Download this Excel template, fill in the user details, "
+        "Download the needed template, fill in the user details, "
         "and then upload it below."
     )
     try:
@@ -86,6 +86,17 @@ with st.expander("User Upload Template"):
             )
     except FileNotFoundError:
         st.error("Template file not found on the server. Please contact the administrator.")
+    
+    try:
+        with open("projectUploadTemplate.xlsx", "rb") as f:
+            st.download_button(
+                label="Download Project Upload Template",
+                data=f,
+                file_name="projectUploadTemplate.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+    except FileNotFoundError:
+        st.error("Project template file not found on the server. Please contact the administrator.")
 
 
 uploaded_file = st.file_uploader("Choose Excel file", type=["xlsx", "xlsm"])
