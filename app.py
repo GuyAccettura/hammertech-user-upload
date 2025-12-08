@@ -114,13 +114,14 @@ else:  # Employer Profiles
     st.info(
         "You selected **Employer Profiles**. Expected columns (in order):\n\n"
         "1. Business Name\n"
-        "2. Address Line 1\n"
-        "3. Address Line 2\n"
-        "4. City / Suburb\n"
-        "5. State / Province\n"
-        "6. Postal Code\n"
-        "7. Country\n"
-        "8. Internal Identifier"
+        "2. ABN\n"
+        "3. Address Line 1\n"
+        "4. Address Line 2\n"
+        "5. City / Suburb\n"
+        "6. State / Province\n"
+        "7. Postal Code\n"
+        "8. Country\n"
+        "9. Internal Identifier"
     )
 
 # ----------------- CREDENTIALS -----------------
@@ -396,24 +397,39 @@ if run_button:
                     continue
 
                 business_name = row[0]
-                addr_line1 = row[1]
-                addr_line2 = row[2]
-                city = row[3]
-                state = row[4]
-                postal_code = row[5]
-                country = row[6]
-                internalIdentifier = row[7] if len(row) > 7 else None
+                abn = row[1]
+                addr_line1 = row[2]
+                addr_line2 = row[3]
+                city = row[4]
+                state = row[5]
+                postal_code = row[6]
+                country = row[7]
+                internalIdentifier = row[8] if len(row) > 8 else None
 
                 # skip completely empty rows
-                if not any([business_name, addr_line1, addr_line2, city, state, postal_code, country, internalIdentifier]):
+                if not any(
+                    [
+                        business_name,
+                        abn,
+                        addr_line1,
+                        addr_line2,
+                        city,
+                        state,
+                        postal_code,
+                        country,
+                        internalIdentifier,
+                    ]
+                ):
                     continue
 
                 internalIdentifier_str = (
                     str(internalIdentifier) if internalIdentifier is not None else ""
                 )
+                abn_str = str(abn) if abn is not None else ""
 
                 payload = {
                     "businessName": business_name or "",
+                    "abn": abn_str,
                     "address": {
                         "line1": addr_line1 or "",
                         "line2": addr_line2 or "",
@@ -451,6 +467,7 @@ if run_button:
 
                 progress_bar.progress(min(i / total_rows, 1.0))
                 log_area.text("\n".join(logs[-20:]))
+
 
         # ------------- SUMMARY -------------
         st.success("Upload complete.")
