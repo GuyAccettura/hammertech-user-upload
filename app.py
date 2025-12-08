@@ -31,12 +31,26 @@ def get_token(auth_endpoint, email, password, tenant):
     return data["token"]
 
 
-def post_to_api(token, payload, upload_type: str, user_endpoint: str, project_endpoint: str):
-    """Send either user or project payload to the correct endpoint."""
+def post_to_api(
+    token,
+    payload,
+    upload_type: str,
+    user_endpoint: str,
+    project_endpoint: str,
+    employer_endpoint: str,
+):
+    """
+    Send payload to the correct endpoint based on upload_type:
+    - Users            -> user_endpoint (Worker Profiles)
+    - Projects         -> project_endpoint (Projects)
+    - Employer Profiles -> employer_endpoint (EmployerProfiles)
+    """
     if upload_type == "Users":
         endpoint = user_endpoint
-    else:
+    elif upload_type == "Projects":
         endpoint = project_endpoint
+    else:  # Employer Profiles
+        endpoint = employer_endpoint
 
     headers = {"Authorization": "Bearer " + token}
     r = requests.post(endpoint, headers=headers, json=payload)
@@ -49,7 +63,7 @@ st.title("HammerTech Uploader")
 st.markdown(
     """
 Upload an Excel file, enter your HammerTech credentials and tenant, and this app
-will create **users** or **projects** via the HammerTech API.
+will create **users**, **projects**, or **employer profiles** via the HammerTech API.
 """
 )
 
@@ -66,20 +80,47 @@ st.caption(
 auth_endpoint, api_base = get_endpoints(region)
 USER_ENDPOINT = f"{api_base}/workerprofiles"
 PROJECT_ENDPOINT = f"{api_base}/projects"
+EMPLOYER_ENDPOINT = f"{api_base}/EmployerProfiles"
 
 # ----------------- UPLOAD TYPE -----------------
 st.header("Upload Type")
-upload_type = st.selectbox("What do you want to upload?", ["Users", "Projects"])
+upload_type = st.selectbox(
+    "What do you want to upload?",
+    ["Users", "Projects", "Employer Profiles"],
+)
 
 if upload_type == "Users":
     st.info(
-        "You selected **Users**. Expected columns (in order): "
-        "`Email`, `Full Name`, `Phone`, `Job Title`, `Internal Identifier`, `Demo Project ID`."
+        "You selected **Users**. Expected columns (in order):\n\n"
+        "1. Email\n"
+        "2. Full Name\n"
+        "3. Phone\n"
+        "4. Job Title\n"
+        "5. Internal Identifier\n"
+        "6. Demo Project ID"
     )
-else:
+elif upload_type == "Projects":
     st.info(
-        "You selected **Projects**. Expected columns (in order): "
-        "`ProjectName`, `Country`, `siteAddress`, `timeZoneString`, `state`, `internalid`, `regionId`."
+        "You selected **Projects**. Expected columns (in order):\n\n"
+        "1. ProjectName\n"
+        "2. Country\n"
+        "3. siteAddress\n"
+        "4. timeZoneString\n"
+        "5. state\n"
+        "6. internalid\n"
+        "7. regionId"
+    )
+else:  # Employer Profiles
+    st.info(
+        "You selected **Employer Profiles**. Expected columns (in order):\n\n"
+        "1. Business Name\n"
+        "2. Address Line 1\n"
+        "3. Address Line 2\n"
+        "4. City / Suburb\n"
+        "5. State / Province\n"
+        "6. Postal Code\n"
+        "7. Country\n"
+        "8. Internal Identifier"
     )
 
 # ----------------- CREDENTIALS -----------------
@@ -124,6 +165,20 @@ with st.expander("Upload Templates"):
             )
     except FileNotFoundError:
         st.error("Project template file not found on the server. Please contact the administrator.")
+
+    # Employer Profile template (optional file if you create one)
+    try:
+        with open("employerProfileUploadTemplate.xlsx", "rb") as f:
+            st.download_button(
+                label="Download Employer Profile Upload Template",
+                data=f,
+                file_name="employerProfileUploadTemplate.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+    except FileNotFoundError:
+        # Only show as error if they’ve selected Employer Profiles
+        if upload_type == "Employer Profiles":
+            st.error("Employer Profile template file not found on the server. Please contact the administrator.")
 
 uploaded_file = st.file_uploader("Choose Excel file", type=["xlsx", "xlsm"])
 sheet_name = st.text_input("Sheet name")
@@ -218,7 +273,12 @@ if run_button:
 
                 try:
                     status_code, response_text = post_to_api(
-                        token, payload, upload_type, USER_ENDPOINT, PROJECT_ENDPOINT
+                        token,
+                        payload,
+                        upload_type,
+                        USER_ENDPOINT,
+                        PROJECT_ENDPOINT,
+                        EMPLOYER_ENDPOINT,
                     )
                     if 200 <= status_code < 300:
                         logs.append(f"Row {i}: ✅ Success (HTTP {status_code}).")
@@ -237,7 +297,7 @@ if run_button:
                 log_area.text("\n".join(logs[-20:]))
 
         # ------------- PROJECTS UPLOAD FLOW -------------
-        else:  # upload_type == "Projects"
+        elif upload_type == "Projects":
             for i, row in enumerate(rows, start=1):
                 if i < start_row:
                     continue
@@ -297,7 +357,7 @@ if run_button:
                         {
                             "dayOfWeek": "Tuesday",
                             "startTime": "07:00:00",
-                            "EndTime": "17:00:00"
+                            "endTime": "17:00:00"
                         }
                     ]
                 }
@@ -307,7 +367,12 @@ if run_button:
 
                 try:
                     status_code, response_text = post_to_api(
-                        token, payload, upload_type, USER_ENDPOINT, PROJECT_ENDPOINT
+                        token,
+                        payload,
+                        upload_type,
+                        USER_ENDPOINT,
+                        PROJECT_ENDPOINT,
+                        EMPLOYER_ENDPOINT,
                     )
                     if 200 <= status_code < 300:
                         logs.append(f"Row {i}: ✅ Success (HTTP {status_code}).")
@@ -319,6 +384,69 @@ if run_button:
                         fail_count += 1
                 except Exception as e:
                     logs.append(f"Row {i}: ❌ Error sending project: {e}")
+                    fail_count += 1
+
+                progress_bar.progress(min(i / total_rows, 1.0))
+                log_area.text("\n".join(logs[-20:]))
+
+        # ------------- EMPLOYER PROFILES UPLOAD FLOW -------------
+        else:  # upload_type == "Employer Profiles"
+            for i, row in enumerate(rows, start=1):
+                if i < start_row:
+                    continue
+
+                business_name = row[0]
+                addr_line1 = row[1]
+                addr_line2 = row[2]
+                city = row[3]
+                state = row[4]
+                postal_code = row[5]
+                country = row[6]
+                internalIdentifier = row[7] if len(row) > 7 else None
+
+                # skip completely empty rows
+                if not any([business_name, addr_line1, addr_line2, city, state, postal_code, country, internalIdentifier]):
+                    continue
+
+                internalIdentifier_str = (
+                    str(internalIdentifier) if internalIdentifier is not None else ""
+                )
+
+                payload = {
+                    "businessName": business_name or "",
+                    "address": {
+                        "line1": addr_line1 or "",
+                        "line2": addr_line2 or "",
+                        "city": city or "",
+                        "state": state or "",
+                        "postalCode": postal_code or "",
+                        "country": country or "",
+                    },
+                    "internalIdentifier": internalIdentifier_str,
+                }
+
+                row_count += 1
+                logs.append(f"Row {i}: Sending employer profile {business_name}...")
+
+                try:
+                    status_code, response_text = post_to_api(
+                        token,
+                        payload,
+                        upload_type,
+                        USER_ENDPOINT,
+                        PROJECT_ENDPOINT,
+                        EMPLOYER_ENDPOINT,
+                    )
+                    if 200 <= status_code < 300:
+                        logs.append(f"Row {i}: ✅ Success (HTTP {status_code}).")
+                        success_count += 1
+                    else:
+                        logs.append(
+                            f"Row {i}: ❌ Failed (HTTP {status_code}). Response: {response_text}"
+                        )
+                        fail_count += 1
+                except Exception as e:
+                    logs.append(f"Row {i}: ❌ Error sending employer profile: {e}")
                     fail_count += 1
 
                 progress_bar.progress(min(i / total_rows, 1.0))
