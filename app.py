@@ -398,21 +398,19 @@ if run_button:
 
                 business_name = row[0]
                 abn = row[1]
-                addr_line1 = row[2]
-                addr_line2 = row[3]
-                city = row[4]
-                state = row[5]
-                postal_code = row[6]
-                country = row[7]
-                internalIdentifier = row[8] if len(row) > 8 else None
+                streetAddress = row[2]
+                city = row[3]
+                state = row[4]
+                postal_code = row[5]
+                country = row[6]
+                internalIdentifier = row[7] if len(row) > 8 else None
 
                 # skip completely empty rows
                 if not any(
                     [
                         business_name,
                         abn,
-                        addr_line1,
-                        addr_line2,
+                        streetAddress
                         city,
                         state,
                         postal_code,
@@ -430,14 +428,16 @@ if run_button:
                 payload = {
                     "businessName": business_name or "",
                     "abn": abn_str,
-                    "address": {
-                        "line1": addr_line1 or "",
-                        "line2": addr_line2 or "",
-                        "city": city or "",
+                    "addresses": [
+                        {
+                        "addressType": "Physical"
+                        "streetAddress": streetAddress or "",
+                        "suburb": city or "",
                         "state": state or "",
                         "postalCode": postal_code or "",
                         "country": country or "",
-                    },
+                        }
+                    ],
                     "internalIdentifier": internalIdentifier_str,
                 }
 
