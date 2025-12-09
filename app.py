@@ -115,13 +115,12 @@ else:  # Employer Profiles
         "You selected **Employer Profiles**. Expected columns (in order):\n\n"
         "1. Business Name\n"
         "2. ABN\n"
-        "3. Address Line 1\n"
-        "4. Address Line 2\n"
-        "5. City / Suburb\n"
-        "6. State / Province\n"
-        "7. Postal Code\n"
-        "8. Country\n"
-        "9. Internal Identifier"
+        "3. Street Address\n"
+        "4. City / Suburb\n"
+        "5. State / Province\n"
+        "6. Postal Code\n"
+        "7. Country\n"
+        "8. Internal Identifier"
     )
 
 # ----------------- CREDENTIALS -----------------
