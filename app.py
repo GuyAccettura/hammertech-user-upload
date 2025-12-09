@@ -423,6 +423,7 @@ if run_button:
                     str(internalIdentifier) if internalIdentifier is not None else ""
                 )
                 abn_str = str(abn) if abn is not None else ""
+                post_code_str = str(postal_code) if postal_code is not None else ""
 
                 payload = {
                     "businessName": business_name or "",
@@ -433,7 +434,7 @@ if run_button:
                         "streetAddress": streetAddress or "",
                         "suburb": city or "",
                         "state": state or "",
-                        "postCode": postal_code or "",
+                        "postCode": post_code_str or "",
                         "country": country or "",
                         }
                     ],
