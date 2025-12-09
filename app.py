@@ -402,7 +402,7 @@ if run_button:
                 state = row[4]
                 postal_code = row[5]
                 country = row[6]
-                internalIdentifier = row[7] if len(row) > 8 else None
+                internalIdentifier = row[7] if len(row) > 7 else None
 
                 # skip completely empty rows
                 if not any(
