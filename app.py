@@ -430,7 +430,7 @@ if run_button:
                     "abn": abn_str,
                     "addresses": [
                         {
-                        "addressType": "Physical"
+                        "addressType": "Physical",
                         "streetAddress": streetAddress or "",
                         "suburb": city or "",
                         "state": state or "",
