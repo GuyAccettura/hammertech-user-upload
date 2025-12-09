@@ -410,7 +410,7 @@ if run_button:
                     [
                         business_name,
                         abn,
-                        streetAddress
+                        streetAddress,
                         city,
                         state,
                         postal_code,
