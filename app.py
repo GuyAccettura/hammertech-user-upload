@@ -433,7 +433,7 @@ if run_button:
                         "streetAddress": streetAddress or "",
                         "suburb": city or "",
                         "state": state or "",
-                        "postalCode": postal_code or "",
+                        "postCode": postal_code or "",
                         "country": country or "",
                         }
                     ],
