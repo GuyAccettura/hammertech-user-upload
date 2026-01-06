@@ -78,7 +78,7 @@ st.caption(
 )
 
 auth_endpoint, api_base = get_endpoints(region)
-USER_ENDPOINT = f"{api_base}/workerprofiles"
+USER_ENDPOINT = f"{api_base}/users"
 PROJECT_ENDPOINT = f"{api_base}/projects"
 EMPLOYER_ENDPOINT = f"{api_base}/EmployerProfiles"
 
