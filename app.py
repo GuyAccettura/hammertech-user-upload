@@ -517,7 +517,7 @@ with st.expander("Upload Template"):
         "Download the combined template, complete the sheets you want to upload, then upload that single workbook below."
     )
     try:
-        with open("/mnt/data/UploadTemplate.xlsx", "rb") as f:
+        with open("UploadTemplate.xlsx", "rb") as f:
             st.download_button(
                 label="Download Combined Upload Template",
                 data=f,
