@@ -1,9 +1,14 @@
 import io
-from typing import Dict, List, Tuple
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 import openpyxl
 import requests
 import streamlit as st
+
+
+REQUEST_TIMEOUT = 60
+DEFAULT_LANGUAGE = "en-US"
 
 
 # --------- REGION-BASED ENDPOINTS ---------
@@ -47,6 +52,14 @@ SHEET_CONFIG: Dict[str, Dict[str, str]] = {
             "State / Province, Postal Code, Country, Internal Identifier"
         ),
     },
+    "Workers": {
+        "label": "Workers",
+        "endpoint_key": "workers",
+        "description": (
+            "Expected columns: First Name, Last Name, Job Title, Job Title ID, DOB, "
+            "Street Address, Suburb, Postcode, State, Country, Internal Id, Project ID, Employer ID"
+        ),
+    },
 }
 
 DISPLAY_TO_SHEET = {cfg["label"]: sheet_name for sheet_name, cfg in SHEET_CONFIG.items()}
@@ -55,7 +68,7 @@ DISPLAY_TO_SHEET = {cfg["label"]: sheet_name for sheet_name, cfg in SHEET_CONFIG
 def get_token(auth_endpoint: str, email: str, password: str, tenant: str) -> str:
     headers = {"accept": "application/json", "Content-Type": "application/json"}
     body = {"email": email, "password": password, "tenant": tenant}
-    response = requests.post(auth_endpoint, headers=headers, json=body)
+    response = requests.post(auth_endpoint, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
     data = response.json()
     if "token" not in data:
@@ -64,9 +77,31 @@ def get_token(auth_endpoint: str, email: str, password: str, tenant: str) -> str
 
 
 def post_to_api(token: str, payload: dict, endpoint: str) -> Tuple[int, str]:
-    headers = {"Authorization": "Bearer " + token}
-    response = requests.post(endpoint, headers=headers, json=payload)
+    headers = {
+        "Authorization": "Bearer " + token,
+        "accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    response = requests.post(endpoint, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
     return response.status_code, response.text
+
+
+def post_json_to_api(token: str, payload: dict, endpoint: str) -> Tuple[int, Any]:
+    headers = {
+        "Authorization": "Bearer " + token,
+        "accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    response = requests.post(endpoint, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+    content_type = response.headers.get("Content-Type", "")
+    if "application/json" in content_type.lower() and response.text:
+        try:
+            parsed = response.json()
+        except ValueError:
+            parsed = response.text
+    else:
+        parsed = response.text
+    return response.status_code, parsed
 
 
 def workbook_sheet_options(file_bytes: bytes) -> Tuple[openpyxl.Workbook, List[str], List[str]]:
@@ -81,6 +116,41 @@ def workbook_sheet_options(file_bytes: bytes) -> Tuple[openpyxl.Workbook, List[s
             missing_template_sheets.append(sheet_name)
 
     return wb, available_display_names, missing_template_sheets
+
+
+def normalize_date(value: Any) -> Optional[str]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(cleaned, fmt).date().isoformat()
+            except ValueError:
+                continue
+        raise ValueError(f"Unsupported DOB format: {value}")
+    raise ValueError(f"Unsupported DOB value: {value!r}")
+
+
+def extract_created_id(payload: Any) -> Optional[str]:
+    if isinstance(payload, dict):
+        candidate_paths = [
+            payload.get("createdEntityId"),
+            payload.get("id"),
+            payload.get("workerProfile", {}).get("id") if isinstance(payload.get("workerProfile"), dict) else None,
+            payload.get("data", {}).get("id") if isinstance(payload.get("data"), dict) else None,
+            payload.get("result", {}).get("id") if isinstance(payload.get("result"), dict) else None,
+        ]
+        for candidate in candidate_paths:
+            if candidate:
+                return str(candidate)
+    return None
 
 
 def build_user_payload(row: tuple) -> Tuple[bool, dict]:
@@ -180,7 +250,67 @@ def build_employer_profile_payload(row: tuple) -> Tuple[bool, dict]:
     return True, payload
 
 
-def process_sheet(
+def build_worker_profile_payload(row: tuple) -> Tuple[bool, dict]:
+    first_name = row[0] if len(row) > 0 else None
+    last_name = row[1] if len(row) > 1 else None
+    job_title = row[2] if len(row) > 2 else None
+    job_title_id = row[3] if len(row) > 3 else None
+    dob = row[4] if len(row) > 4 else None
+    street_address = row[5] if len(row) > 5 else None
+    suburb = row[6] if len(row) > 6 else None
+    postcode = row[7] if len(row) > 7 else None
+    state = row[8] if len(row) > 8 else None
+    country = row[9] if len(row) > 9 else None
+    internal_id = row[10] if len(row) > 10 else None
+    project_id = row[11] if len(row) > 11 else None
+    employer_id = row[12] if len(row) > 12 else None
+
+    if not any([
+        first_name,
+        last_name,
+        job_title,
+        job_title_id,
+        dob,
+        street_address,
+        suburb,
+        postcode,
+        state,
+        country,
+        internal_id,
+        project_id,
+        employer_id,
+    ]):
+        return False, {}
+
+    profile_payload = {
+        "firstName": str(first_name).strip() if first_name is not None else "",
+        "lastName": str(last_name).strip() if last_name is not None else "",
+        "jobTitle": str(job_title).strip() if job_title is not None else "",
+        "jobTitleId": str(job_title_id).strip() if job_title_id is not None else "",
+        "dateOfBirth": normalize_date(dob),
+        "streetAddress": str(street_address).strip() if street_address is not None else "",
+        "suburb": str(suburb).strip() if suburb is not None else "",
+        "postCode": str(postcode).strip() if postcode is not None else "",
+        "state": str(state).strip() if state is not None else "",
+        "country": str(country).strip() if country is not None else "",
+        "internalIdentifier": str(internal_id).strip() if internal_id is not None else "",
+        "preferredCommunicationLanguage": DEFAULT_LANGUAGE,
+    }
+    profile_payload = {k: v for k, v in profile_payload.items() if v not in (None, "")}
+    return True, profile_payload
+
+
+def build_worker_assignment_payload(row: tuple, worker_profile_id: str) -> dict:
+    employer_id = row[12] if len(row) > 12 else None
+    project_id = row[11] if len(row) > 11 else None
+    return {
+        "employerId": str(employer_id).strip() if employer_id is not None else "",
+        "projectId": str(project_id).strip() if project_id is not None else "",
+        "workerProfileId": worker_profile_id,
+    }
+
+
+def process_standard_sheet(
     workbook: openpyxl.Workbook,
     sheet_name: str,
     token: str,
@@ -244,11 +374,104 @@ def process_sheet(
     logs.append(f"Finished sheet: {sheet_name}")
     log_area.text("\n".join(logs[-25:]))
 
-    return {
-        "processed": processed,
-        "success": success,
-        "failed": failed,
-    }
+    return {"processed": processed, "success": success, "failed": failed}
+
+
+def process_workers_sheet(
+    workbook: openpyxl.Workbook,
+    token: str,
+    worker_profiles_endpoint: str,
+    workers_endpoint: str,
+    start_row: int,
+    progress_bar,
+    log_area,
+    progress_start: float,
+    progress_span: float,
+    logs: List[str],
+) -> Dict[str, int]:
+    sheet = workbook["Workers"]
+    rows = list(sheet.iter_rows(values_only=True))
+    total_rows = max(len(rows), start_row)
+
+    processed = 0
+    success = 0
+    failed = 0
+
+    logs.append("Starting sheet: Workers")
+    log_area.text("\n".join(logs[-25:]))
+
+    for i, row in enumerate(rows, start=1):
+        if i < start_row:
+            continue
+
+        try:
+            should_send, profile_payload = build_worker_profile_payload(row)
+            if not should_send:
+                current_progress = progress_start + progress_span * min(i / total_rows, 1.0)
+                progress_bar.progress(min(current_progress, 1.0))
+                continue
+        except Exception as exc:
+            processed += 1
+            failed += 1
+            logs.append(f"Workers row {i}: Invalid data. {exc}")
+            current_progress = progress_start + progress_span * min(i / total_rows, 1.0)
+            progress_bar.progress(min(current_progress, 1.0))
+            log_area.text("\n".join(logs[-25:]))
+            continue
+
+        processed += 1
+        worker_name = " ".join([
+            str(row[0]).strip() if len(row) > 0 and row[0] else "",
+            str(row[1]).strip() if len(row) > 1 and row[1] else "",
+        ]).strip()
+        logs.append(f"Workers row {i}: Creating worker profile for {worker_name or 'worker'}...")
+
+        try:
+            profile_status, profile_response = post_json_to_api(token, profile_payload, worker_profiles_endpoint)
+            if not (200 <= profile_status < 300):
+                logs.append(
+                    f"Workers row {i}: Worker profile failed (HTTP {profile_status}). Response: {profile_response}"
+                )
+                failed += 1
+                current_progress = progress_start + progress_span * min(i / total_rows, 1.0)
+                progress_bar.progress(min(current_progress, 1.0))
+                log_area.text("\n".join(logs[-25:]))
+                continue
+
+            worker_profile_id = extract_created_id(profile_response)
+            if not worker_profile_id:
+                logs.append(
+                    f"Workers row {i}: Worker profile created but no id found in response: {profile_response}"
+                )
+                failed += 1
+                current_progress = progress_start + progress_span * min(i / total_rows, 1.0)
+                progress_bar.progress(min(current_progress, 1.0))
+                log_area.text("\n".join(logs[-25:]))
+                continue
+
+            worker_payload = build_worker_assignment_payload(row, worker_profile_id)
+            logs.append("Workers row {i}: Assigning worker profile to project/employer...".format(i=i))
+            worker_status, worker_response = post_json_to_api(token, worker_payload, workers_endpoint)
+            if 200 <= worker_status < 300:
+                logs.append(f"Workers row {i}: Success (profile + worker created).")
+                success += 1
+            else:
+                logs.append(
+                    f"Workers row {i}: Worker assignment failed (HTTP {worker_status}). Response: {worker_response}"
+                )
+                failed += 1
+        except Exception as exc:
+            logs.append(f"Workers row {i}: Error sending record: {exc}")
+            failed += 1
+
+        current_progress = progress_start + progress_span * min(i / total_rows, 1.0)
+        progress_bar.progress(min(current_progress, 1.0))
+        log_area.text("\n".join(logs[-25:]))
+
+    logs.append("Finished sheet: Workers")
+    log_area.text("\n".join(logs[-25:]))
+
+    return {"processed": processed, "success": success, "failed": failed}
 
 
 st.set_page_config(page_title="HammerTech Uploader", layout="wide")
@@ -261,24 +484,22 @@ choose which template sheets to process and upload.
 """
 )
 
-# ----------------- REGION SELECTION -----------------
 st.header("Region")
 region = st.selectbox(
     "Select your HammerTech region",
     ["North America", "Asia/Australia/NZ", "Europe/UK"],
 )
-st.caption(
-    "This controls which auth and API endpoints are used (US, AU, or EU environments)."
-)
+st.caption("This controls which auth and API endpoints are used (US, AU, or EU environments).")
 
 auth_endpoint, api_base = get_endpoints(region)
 ENDPOINTS = {
     "users": f"{api_base}/users",
     "projects": f"{api_base}/projects",
     "employer_profiles": f"{api_base}/EmployerProfiles",
+    "worker_profiles": f"{api_base}/WorkerProfiles",
+    "workers": f"{api_base}/workers",
 }
 
-# ----------------- CREDENTIALS -----------------
 st.header("API Credentials")
 col1, col2 = st.columns(2)
 
@@ -289,16 +510,14 @@ with col1:
 with col2:
     password = st.text_input("Password", type="password")
 
-# ----------------- FILE + SHEET SELECTION -----------------
 st.header("Excel File")
 
 with st.expander("Upload Template"):
     st.write(
-        "Download the combined template, complete the sheets you want to upload, "
-        "then upload that single workbook below."
+        "Download the combined template, complete the sheets you want to upload, then upload that single workbook below."
     )
     try:
-        with open("UploadTemplate.xlsx", "rb") as f:
+        with open("/mnt/data/UploadTemplate.xlsx", "rb") as f:
             st.download_button(
                 label="Download Combined Upload Template",
                 data=f,
@@ -342,16 +561,12 @@ if uploaded_file is not None:
             )
 
         if missing_template_sheets:
-            st.info(
-                "These template sheets were not found in the workbook: "
-                + ", ".join(missing_template_sheets)
-            )
+            st.info("These template sheets were not found in the workbook: " + ", ".join(missing_template_sheets))
     except Exception as exc:
         st.error(f"Failed to inspect workbook: {exc}")
 
 run_button = st.button("Run Upload")
 
-# ----------------- MAIN LOGIC -----------------
 if run_button:
     if not (email and password and tenant and uploaded_file):
         st.error("Please fill in all credential fields and upload a file.")
@@ -371,10 +586,7 @@ if run_button:
     selected_sheet_names = [DISPLAY_TO_SHEET[name] for name in selected_display_sheets]
     missing_selected_sheets = [sheet_name for sheet_name in selected_sheet_names if sheet_name not in workbook.sheetnames]
     if missing_selected_sheets:
-        st.error(
-            "The uploaded workbook is missing these selected sheets: "
-            + ", ".join(missing_selected_sheets)
-        )
+        st.error("The uploaded workbook is missing these selected sheets: " + ", ".join(missing_selected_sheets))
         st.stop()
 
     try:
@@ -397,22 +609,36 @@ if run_button:
     total_selected = len(selected_sheet_names)
     for idx, sheet_name in enumerate(selected_sheet_names):
         config = SHEET_CONFIG[sheet_name]
-        endpoint = ENDPOINTS[config["endpoint_key"]]
         progress_start = idx / total_selected
         progress_span = 1 / total_selected
 
-        sheet_result = process_sheet(
-            workbook=workbook,
-            sheet_name=sheet_name,
-            token=token,
-            endpoint=endpoint,
-            start_row=start_row,
-            progress_bar=progress_bar,
-            log_area=log_area,
-            progress_start=progress_start,
-            progress_span=progress_span,
-            logs=logs,
-        )
+        if sheet_name == "Workers":
+            sheet_result = process_workers_sheet(
+                workbook=workbook,
+                token=token,
+                worker_profiles_endpoint=ENDPOINTS["worker_profiles"],
+                workers_endpoint=ENDPOINTS["workers"],
+                start_row=start_row,
+                progress_bar=progress_bar,
+                log_area=log_area,
+                progress_start=progress_start,
+                progress_span=progress_span,
+                logs=logs,
+            )
+        else:
+            endpoint = ENDPOINTS[config["endpoint_key"]]
+            sheet_result = process_standard_sheet(
+                workbook=workbook,
+                sheet_name=sheet_name,
+                token=token,
+                endpoint=endpoint,
+                start_row=start_row,
+                progress_bar=progress_bar,
+                log_area=log_area,
+                progress_start=progress_start,
+                progress_span=progress_span,
+                logs=logs,
+            )
 
         overall_processed += sheet_result["processed"]
         overall_success += sheet_result["success"]
