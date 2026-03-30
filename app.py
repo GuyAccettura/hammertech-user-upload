@@ -1,11 +1,13 @@
-import streamlit as st
-import requests
-import openpyxl
-from datetime import datetime
 import io
+from typing import Dict, List, Tuple
+
+import openpyxl
+import requests
+import streamlit as st
+
 
 # --------- REGION-BASED ENDPOINTS ---------
-def get_endpoints(region: str):
+def get_endpoints(region: str) -> Tuple[str, str]:
     """Return auth endpoint and API base (with /api/v1) for the selected region."""
     if region == "North America":
         auth = "https://us-auth.hammertechonline.com/api/login/generatetoken"
@@ -20,41 +22,233 @@ def get_endpoints(region: str):
     return auth, api_base
 
 
-def get_token(auth_endpoint, email, password, tenant):
+SHEET_CONFIG: Dict[str, Dict[str, str]] = {
+    "Users": {
+        "label": "Users",
+        "endpoint_key": "users",
+        "description": (
+            "Expected columns: Email Address, Full Name, Phone, Job Title, "
+            "Internal Identifier, Demo Project ID"
+        ),
+    },
+    "Projects": {
+        "label": "Projects",
+        "endpoint_key": "projects",
+        "description": (
+            "Expected columns: Project Name, Country, Site Address, Time Zone String, "
+            "State, Internal ID, Region ID"
+        ),
+    },
+    "EmployerProfiles": {
+        "label": "Employer Profiles",
+        "endpoint_key": "employer_profiles",
+        "description": (
+            "Expected columns: Business Name, ABN, Street Address, City / Suburb, "
+            "State / Province, Postal Code, Country, Internal Identifier"
+        ),
+    },
+}
+
+DISPLAY_TO_SHEET = {cfg["label"]: sheet_name for sheet_name, cfg in SHEET_CONFIG.items()}
+
+
+def get_token(auth_endpoint: str, email: str, password: str, tenant: str) -> str:
     headers = {"accept": "application/json", "Content-Type": "application/json"}
     body = {"email": email, "password": password, "tenant": tenant}
-    r = requests.post(auth_endpoint, headers=headers, json=body)
-    r.raise_for_status()
-    data = r.json()
+    response = requests.post(auth_endpoint, headers=headers, json=body)
+    response.raise_for_status()
+    data = response.json()
     if "token" not in data:
         raise ValueError("No token found in response. Check credentials / tenant.")
     return data["token"]
 
 
-def post_to_api(
-    token,
-    payload,
-    upload_type: str,
-    user_endpoint: str,
-    project_endpoint: str,
-    employer_endpoint: str,
-):
-    """
-    Send payload to the correct endpoint based on upload_type:
-    - Users            -> user_endpoint (Worker Profiles)
-    - Projects         -> project_endpoint (Projects)
-    - Employer Profiles -> employer_endpoint (EmployerProfiles)
-    """
-    if upload_type == "Users":
-        endpoint = user_endpoint
-    elif upload_type == "Projects":
-        endpoint = project_endpoint
-    else:  # Employer Profiles
-        endpoint = employer_endpoint
-
+def post_to_api(token: str, payload: dict, endpoint: str) -> Tuple[int, str]:
     headers = {"Authorization": "Bearer " + token}
-    r = requests.post(endpoint, headers=headers, json=payload)
-    return r.status_code, r.text
+    response = requests.post(endpoint, headers=headers, json=payload)
+    return response.status_code, response.text
+
+
+def workbook_sheet_options(file_bytes: bytes) -> Tuple[openpyxl.Workbook, List[str], List[str]]:
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    available_display_names = []
+    missing_template_sheets = []
+
+    for sheet_name, cfg in SHEET_CONFIG.items():
+        if sheet_name in wb.sheetnames:
+            available_display_names.append(cfg["label"])
+        else:
+            missing_template_sheets.append(sheet_name)
+
+    return wb, available_display_names, missing_template_sheets
+
+
+def build_user_payload(row: tuple) -> Tuple[bool, dict]:
+    email_cell = row[0] if len(row) > 0 else None
+    name = row[1] if len(row) > 1 else None
+    mobile = row[2] if len(row) > 2 else None
+    title = row[3] if len(row) > 3 else None
+    internal_identifier = row[4] if len(row) > 4 else None
+    user_project_ids = row[5] if len(row) > 5 else None
+
+    if email_cell is None:
+        return False, {}
+
+    payload = {
+        "name": name or "",
+        "title": title or "",
+        "mobile": str(mobile) if mobile is not None else "",
+        "email": email_cell or "",
+        "internalIdentifier": str(internal_identifier) if internal_identifier is not None else "",
+        "roleNames": ["safetymanager"],
+        "userProjectIds": [user_project_ids] if user_project_ids is not None else [],
+    }
+    return True, payload
+
+
+def build_project_payload(row: tuple) -> Tuple[bool, dict]:
+    project_name = row[0] if len(row) > 0 else None
+    country = row[1] if len(row) > 1 else None
+    site_address = row[2] if len(row) > 2 else None
+    time_zone_string = row[3] if len(row) > 3 else None
+    state = row[4] if len(row) > 4 else None
+    internal_id = row[5] if len(row) > 5 else None
+    region_id = row[6] if len(row) > 6 else None
+
+    if not any([project_name, country, site_address, time_zone_string, state, internal_id, region_id]):
+        return False, {}
+
+    payload = {
+        "isArchived": False,
+        "name": project_name,
+        "siteAddress": site_address,
+        "regionId": region_id,
+        "state": state,
+        "timeZoneString": time_zone_string,
+        "country": country,
+        "internalIdentifier": internal_id,
+        "siteTiming": [
+            {"dayOfWeek": "Wednesday", "startTime": "07:00:00", "endTime": "17:00:00"},
+            {"dayOfWeek": "Thursday", "startTime": "07:00:00", "endTime": "17:00:00"},
+            {"dayOfWeek": "Friday", "startTime": "07:00:00", "endTime": "17:00:00"},
+            {"dayOfWeek": "Saturday", "startTime": "07:00:00", "endTime": "17:00:00"},
+            {"dayOfWeek": "Sunday", "startTime": "07:00:00", "endTime": "17:00:00"},
+            {"dayOfWeek": "Monday", "startTime": "07:00:00", "endTime": "17:00:00"},
+            {"dayOfWeek": "Tuesday", "startTime": "07:00:00", "endTime": "17:00:00"},
+        ],
+    }
+    return True, payload
+
+
+def build_employer_profile_payload(row: tuple) -> Tuple[bool, dict]:
+    business_name = row[0] if len(row) > 0 else None
+    abn = row[1] if len(row) > 1 else None
+    street_address = row[2] if len(row) > 2 else None
+    city = row[3] if len(row) > 3 else None
+    state = row[4] if len(row) > 4 else None
+    postal_code = row[5] if len(row) > 5 else None
+    country = row[6] if len(row) > 6 else None
+    internal_identifier = row[7] if len(row) > 7 else None
+
+    if not any([
+        business_name,
+        abn,
+        street_address,
+        city,
+        state,
+        postal_code,
+        country,
+        internal_identifier,
+    ]):
+        return False, {}
+
+    payload = {
+        "businessName": business_name or "",
+        "abn": str(abn) if abn is not None else "",
+        "addresses": [
+            {
+                "addressType": "Physical",
+                "streetAddress": street_address or "",
+                "suburb": city or "",
+                "state": state or "",
+                "postCode": str(postal_code) if postal_code is not None else "",
+                "country": country or "",
+            }
+        ],
+        "internalIdentifier": str(internal_identifier) if internal_identifier is not None else "",
+    }
+    return True, payload
+
+
+def process_sheet(
+    workbook: openpyxl.Workbook,
+    sheet_name: str,
+    token: str,
+    endpoint: str,
+    start_row: int,
+    progress_bar,
+    log_area,
+    progress_start: float,
+    progress_span: float,
+    logs: List[str],
+) -> Dict[str, int]:
+    sheet = workbook[sheet_name]
+    rows = list(sheet.iter_rows(values_only=True))
+    total_rows = max(len(rows), start_row)
+
+    processed = 0
+    success = 0
+    failed = 0
+
+    payload_builder_map = {
+        "Users": build_user_payload,
+        "Projects": build_project_payload,
+        "EmployerProfiles": build_employer_profile_payload,
+    }
+    payload_builder = payload_builder_map[sheet_name]
+
+    logs.append(f"Starting sheet: {sheet_name}")
+    log_area.text("\n".join(logs[-25:]))
+
+    for i, row in enumerate(rows, start=1):
+        if i < start_row:
+            continue
+
+        should_send, payload = payload_builder(row)
+        if not should_send:
+            current_progress = progress_start + progress_span * min(i / total_rows, 1.0)
+            progress_bar.progress(min(current_progress, 1.0))
+            continue
+
+        processed += 1
+        logs.append(f"{sheet_name} row {i}: Sending record...")
+
+        try:
+            status_code, response_text = post_to_api(token, payload, endpoint)
+            if 200 <= status_code < 300:
+                logs.append(f"{sheet_name} row {i}: Success (HTTP {status_code}).")
+                success += 1
+            else:
+                logs.append(
+                    f"{sheet_name} row {i}: Failed (HTTP {status_code}). Response: {response_text}"
+                )
+                failed += 1
+        except Exception as exc:
+            logs.append(f"{sheet_name} row {i}: Error sending record: {exc}")
+            failed += 1
+
+        current_progress = progress_start + progress_span * min(i / total_rows, 1.0)
+        progress_bar.progress(min(current_progress, 1.0))
+        log_area.text("\n".join(logs[-25:]))
+
+    logs.append(f"Finished sheet: {sheet_name}")
+    log_area.text("\n".join(logs[-25:]))
+
+    return {
+        "processed": processed,
+        "success": success,
+        "failed": failed,
+    }
 
 
 st.set_page_config(page_title="HammerTech Uploader", layout="wide")
@@ -62,8 +256,8 @@ st.title("HammerTech Uploader")
 
 st.markdown(
     """
-Upload an Excel file, enter your HammerTech credentials and tenant, and this app
-will create **users**, **projects**, or **employer profiles** via the HammerTech API.
+Upload the combined Excel template, enter your HammerTech credentials and tenant, then
+choose which template sheets to process and upload.
 """
 )
 
@@ -78,50 +272,11 @@ st.caption(
 )
 
 auth_endpoint, api_base = get_endpoints(region)
-USER_ENDPOINT = f"{api_base}/users"
-PROJECT_ENDPOINT = f"{api_base}/projects"
-EMPLOYER_ENDPOINT = f"{api_base}/EmployerProfiles"
-
-# ----------------- UPLOAD TYPE -----------------
-st.header("Upload Type")
-upload_type = st.selectbox(
-    "What do you want to upload?",
-    ["Users", "Projects", "Employer Profiles"],
-)
-
-if upload_type == "Users":
-    st.info(
-        "You selected **Users**. Expected columns (in order):\n\n"
-        "1. Email\n"
-        "2. Full Name\n"
-        "3. Phone\n"
-        "4. Job Title\n"
-        "5. Internal Identifier\n"
-        "6. Demo Project ID"
-    )
-elif upload_type == "Projects":
-    st.info(
-        "You selected **Projects**. Expected columns (in order):\n\n"
-        "1. ProjectName\n"
-        "2. Country\n"
-        "3. siteAddress\n"
-        "4. timeZoneString\n"
-        "5. state\n"
-        "6. internalid\n"
-        "7. regionId"
-    )
-else:  # Employer Profiles
-    st.info(
-        "You selected **Employer Profiles**. Expected columns (in order):\n\n"
-        "1. Business Name\n"
-        "2. ABN\n"
-        "3. Street Address\n"
-        "4. City / Suburb\n"
-        "5. State / Province\n"
-        "6. Postal Code\n"
-        "7. Country\n"
-        "8. Internal Identifier"
-    )
+ENDPOINTS = {
+    "users": f"{api_base}/users",
+    "projects": f"{api_base}/projects",
+    "employer_profiles": f"{api_base}/EmployerProfiles",
+}
 
 # ----------------- CREDENTIALS -----------------
 st.header("API Credentials")
@@ -134,346 +289,153 @@ with col1:
 with col2:
     password = st.text_input("Password", type="password")
 
-# ----------------- FILE + SHEET -----------------
+# ----------------- FILE + SHEET SELECTION -----------------
 st.header("Excel File")
 
-with st.expander("Upload Templates"):
+with st.expander("Upload Template"):
     st.write(
-        "Download the needed template, fill it in, "
-        "and then upload it below."
+        "Download the combined template, complete the sheets you want to upload, "
+        "then upload that single workbook below."
     )
-    # User template
     try:
-        with open("userUploadTemplate.xlsx", "rb") as f:
+        with open("/mnt/data/UploadTemplate.xlsx", "rb") as f:
             st.download_button(
-                label="Download User Upload Template",
+                label="Download Combined Upload Template",
                 data=f,
-                file_name="userUploadTemplate.xlsx",
+                file_name="UploadTemplate.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
     except FileNotFoundError:
-        st.error("User template file not found on the server. Please contact the administrator.")
-
-    # Project template
-    try:
-        with open("projectUploadTemplate.xlsx", "rb") as f:
-            st.download_button(
-                label="Download Project Upload Template",
-                data=f,
-                file_name="projectUploadTemplate.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-    except FileNotFoundError:
-        st.error("Project template file not found on the server. Please contact the administrator.")
-
-    # Employer Profile template (optional file if you create one)
-    try:
-        with open("employerProfileUploadTemplate.xlsx", "rb") as f:
-            st.download_button(
-                label="Download Employer Profile Upload Template",
-                data=f,
-                file_name="employerProfileUploadTemplate.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-    except FileNotFoundError:
-        # Only show as error if they’ve selected Employer Profiles
-        if upload_type == "Employer Profiles":
-            st.error("Employer Profile template file not found on the server. Please contact the administrator.")
+        st.error("Upload template file not found on the server. Please contact the administrator.")
 
 uploaded_file = st.file_uploader("Choose Excel file", type=["xlsx", "xlsm"])
-sheet_name = st.text_input("Sheet name")
 start_row = st.number_input(
     "Start row (1-based, usually 2 to skip header)",
     min_value=1,
-    value=2
+    value=2,
 )
+
+selected_display_sheets: List[str] = []
+workbook_bytes = None
+
+if uploaded_file is not None:
+    try:
+        workbook_bytes = uploaded_file.getvalue()
+        preview_workbook, available_display_sheets, missing_template_sheets = workbook_sheet_options(workbook_bytes)
+        del preview_workbook
+
+        if available_display_sheets:
+            st.success(f"Workbook loaded. Template sheets found: {', '.join(available_display_sheets)}")
+            selected_display_sheets = st.multiselect(
+                "Which sheets do you want to read and upload?",
+                options=available_display_sheets,
+                default=available_display_sheets,
+            )
+
+            for display_name in available_display_sheets:
+                template_sheet_name = DISPLAY_TO_SHEET[display_name]
+                st.caption(f"{display_name}: {SHEET_CONFIG[template_sheet_name]['description']}")
+        else:
+            st.error(
+                "None of the expected template sheets were found. "
+                f"Expected sheet names: {', '.join(SHEET_CONFIG.keys())}"
+            )
+
+        if missing_template_sheets:
+            st.info(
+                "These template sheets were not found in the workbook: "
+                + ", ".join(missing_template_sheets)
+            )
+    except Exception as exc:
+        st.error(f"Failed to inspect workbook: {exc}")
 
 run_button = st.button("Run Upload")
 
 # ----------------- MAIN LOGIC -----------------
 if run_button:
-    if not (email and password and tenant and uploaded_file and sheet_name):
-        st.error("Please fill in all fields and upload a file.")
-    else:
-        # Authenticate
-        try:
-            with st.spinner(f"Authenticating with HammerTech ({region})..."):
-                token = get_token(auth_endpoint, email, password, tenant)
-            st.success("Authentication successful.")
-        except Exception as e:
-            st.error(f"Authentication failed: {e}")
-            st.stop()
+    if not (email and password and tenant and uploaded_file):
+        st.error("Please fill in all credential fields and upload a file.")
+        st.stop()
 
-        # Load workbook
-        try:
-            file_bytes = uploaded_file.read()
-            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
-        except Exception as e:
-            st.error(f"Failed to load workbook: {e}")
-            st.stop()
+    if not selected_display_sheets:
+        st.error("Please select at least one sheet to upload.")
+        st.stop()
 
-        if sheet_name not in wb.sheetnames:
-            st.error(f"Sheet '{sheet_name}' not found in workbook. Available sheets: {wb.sheetnames}")
-            st.stop()
+    try:
+        workbook_bytes = workbook_bytes or uploaded_file.getvalue()
+        workbook = openpyxl.load_workbook(io.BytesIO(workbook_bytes), data_only=True)
+    except Exception as exc:
+        st.error(f"Failed to load workbook: {exc}")
+        st.stop()
 
-        sheet = wb[sheet_name]
-        st.write(f"Using sheet: `{sheet_name}`")
+    selected_sheet_names = [DISPLAY_TO_SHEET[name] for name in selected_display_sheets]
+    missing_selected_sheets = [sheet_name for sheet_name in selected_sheet_names if sheet_name not in workbook.sheetnames]
+    if missing_selected_sheets:
+        st.error(
+            "The uploaded workbook is missing these selected sheets: "
+            + ", ".join(missing_selected_sheets)
+        )
+        st.stop()
 
-        rows = list(sheet.iter_rows(values_only=True))
-        total_rows = len(rows)
+    try:
+        with st.spinner(f"Authenticating with HammerTech ({region})..."):
+            token = get_token(auth_endpoint, email, password, tenant)
+        st.success("Authentication successful.")
+    except Exception as exc:
+        st.error(f"Authentication failed: {exc}")
+        st.stop()
 
-        row_count = 0
-        success_count = 0
-        fail_count = 0
-        logs = []
+    logs: List[str] = []
+    overall_processed = 0
+    overall_success = 0
+    overall_failed = 0
+    per_sheet_results = []
 
-        progress_bar = st.progress(0)
-        log_area = st.empty()
+    progress_bar = st.progress(0.0)
+    log_area = st.empty()
 
-        # ------------- USERS UPLOAD FLOW -------------
-        if upload_type == "Users":
-            for i, row in enumerate(rows, start=1):
-                if i < start_row:
-                    continue
+    total_selected = len(selected_sheet_names)
+    for idx, sheet_name in enumerate(selected_sheet_names):
+        config = SHEET_CONFIG[sheet_name]
+        endpoint = ENDPOINTS[config["endpoint_key"]]
+        progress_start = idx / total_selected
+        progress_span = 1 / total_selected
 
-                email_cell = row[0]
-                name = row[1]
-                mobile = row[2]
-                title = row[3]
-                internalIdentifier = row[4]
-                user_project_ids = row[5]
+        sheet_result = process_sheet(
+            workbook=workbook,
+            sheet_name=sheet_name,
+            token=token,
+            endpoint=endpoint,
+            start_row=start_row,
+            progress_bar=progress_bar,
+            log_area=log_area,
+            progress_start=progress_start,
+            progress_span=progress_span,
+            logs=logs,
+        )
 
-                if email_cell is None:
-                    # Skip empty row
-                    continue
+        overall_processed += sheet_result["processed"]
+        overall_success += sheet_result["success"]
+        overall_failed += sheet_result["failed"]
+        per_sheet_results.append(
+            {
+                "Sheet": config["label"],
+                "Processed": sheet_result["processed"],
+                "Successful": sheet_result["success"],
+                "Failed": sheet_result["failed"],
+            }
+        )
 
-                mobile_str = str(mobile) if mobile is not None else ""
-                internalIdentifier_str = (
-                    str(internalIdentifier) if internalIdentifier is not None else ""
-                )
+    progress_bar.progress(1.0)
 
-                # roleNames as a list, project IDs as a list (if present)
-                role_names = ["safetymanager"]
-                user_project_ids_list = (
-                    [user_project_ids] if user_project_ids is not None else []
-                )
+    st.success("Upload complete.")
+    st.write(f"**Total rows processed:** {overall_processed}")
+    st.write(f"Successful: {overall_success}")
+    st.write(f"Failed: {overall_failed}")
 
-                payload = {
-                    "name": name or "",
-                    "title": title or "",
-                    "mobile": mobile_str,
-                    "email": email_cell or "",
-                    "internalIdentifier": internalIdentifier_str,
-                    "roleNames": role_names,
-                    "userProjectIds": user_project_ids_list,
-                }
+    if per_sheet_results:
+        st.subheader("Per-sheet summary")
+        st.table(per_sheet_results)
 
-                row_count += 1
-                logs.append(f"Row {i}: Sending user {name}...")
-
-                try:
-                    status_code, response_text = post_to_api(
-                        token,
-                        payload,
-                        upload_type,
-                        USER_ENDPOINT,
-                        PROJECT_ENDPOINT,
-                        EMPLOYER_ENDPOINT,
-                    )
-                    if 200 <= status_code < 300:
-                        logs.append(f"Row {i}: ✅ Success (HTTP {status_code}).")
-                        success_count += 1
-                    else:
-                        logs.append(
-                            f"Row {i}: ❌ Failed (HTTP {status_code}). Response: {response_text}"
-                        )
-                        fail_count += 1
-                except Exception as e:
-                    logs.append(f"Row {i}: ❌ Error sending user: {e}")
-                    fail_count += 1
-
-                # Update UI
-                progress_bar.progress(min(i / total_rows, 1.0))
-                log_area.text("\n".join(logs[-20:]))
-
-        # ------------- PROJECTS UPLOAD FLOW -------------
-        elif upload_type == "Projects":
-            for i, row in enumerate(rows, start=1):
-                if i < start_row:
-                    continue
-
-                ProjectName = row[0]
-                country = row[1]
-                siteAddress = row[2]
-                timeZoneString = row[3]
-                state = row[4]
-                internalid = row[5]
-                regionId = row[6]
-
-                # skip completely empty rows
-                if not any([ProjectName, country, siteAddress, timeZoneString, state, internalid, regionId]):
-                    continue
-
-                payload = {
-                    "isArchived": False,
-                    "name": ProjectName,
-                    "siteAddress": siteAddress,
-                    "regionId": regionId,
-                    "state": state,
-                    "timeZoneString": timeZoneString,
-                    "country": country,
-                    "internalIdentifier": internalid,
-                    "siteTiming": [
-                        {
-                            "dayOfWeek": "Wednesday",
-                            "startTime": "07:00:00",
-                            "endTime": "17:00:00"
-                        },
-                        {
-                            "dayOfWeek": "Thursday",
-                            "startTime": "07:00:00",
-                            "endTime": "17:00:00"
-                        },
-                        {
-                            "dayOfWeek": "Friday",
-                            "startTime": "07:00:00",
-                            "endTime": "17:00:00"
-                        },
-                        {
-                            "dayOfWeek": "Saturday",
-                            "startTime": "07:00:00",
-                            "endTime": "17:00:00"
-                        },
-                        {
-                            "dayOfWeek": "Sunday",
-                            "startTime": "07:00:00",
-                            "endTime": "17:00:00"
-                        },
-                        {
-                            "dayOfWeek": "Monday",
-                            "startTime": "07:00:00",
-                            "endTime": "17:00:00"
-                        },
-                        {
-                            "dayOfWeek": "Tuesday",
-                            "startTime": "07:00:00",
-                            "endTime": "17:00:00"
-                        }
-                    ]
-                }
-
-                row_count += 1
-                logs.append(f"Row {i}: Sending project {ProjectName}...")
-
-                try:
-                    status_code, response_text = post_to_api(
-                        token,
-                        payload,
-                        upload_type,
-                        USER_ENDPOINT,
-                        PROJECT_ENDPOINT,
-                        EMPLOYER_ENDPOINT,
-                    )
-                    if 200 <= status_code < 300:
-                        logs.append(f"Row {i}: ✅ Success (HTTP {status_code}).")
-                        success_count += 1
-                    else:
-                        logs.append(
-                            f"Row {i}: ❌ Failed (HTTP {status_code}). Response: {response_text}"
-                        )
-                        fail_count += 1
-                except Exception as e:
-                    logs.append(f"Row {i}: ❌ Error sending project: {e}")
-                    fail_count += 1
-
-                progress_bar.progress(min(i / total_rows, 1.0))
-                log_area.text("\n".join(logs[-20:]))
-
-        # ------------- EMPLOYER PROFILES UPLOAD FLOW -------------
-        else:  # upload_type == "Employer Profiles"
-            for i, row in enumerate(rows, start=1):
-                if i < start_row:
-                    continue
-
-                business_name = row[0]
-                abn = row[1]
-                streetAddress = row[2]
-                city = row[3]
-                state = row[4]
-                postal_code = row[5]
-                country = row[6]
-                internalIdentifier = row[7] if len(row) > 7 else None
-
-                # skip completely empty rows
-                if not any(
-                    [
-                        business_name,
-                        abn,
-                        streetAddress,
-                        city,
-                        state,
-                        postal_code,
-                        country,
-                        internalIdentifier,
-                    ]
-                ):
-                    continue
-
-                internalIdentifier_str = (
-                    str(internalIdentifier) if internalIdentifier is not None else ""
-                )
-                abn_str = str(abn) if abn is not None else ""
-                post_code_str = str(postal_code) if postal_code is not None else ""
-
-                payload = {
-                    "businessName": business_name or "",
-                    "abn": abn_str,
-                    "addresses": [
-                        {
-                        "addressType": "Physical",
-                        "streetAddress": streetAddress or "",
-                        "suburb": city or "",
-                        "state": state or "",
-                        "postCode": post_code_str or "",
-                        "country": country or "",
-                        }
-                    ],
-                    "internalIdentifier": internalIdentifier_str,
-                }
-
-                row_count += 1
-                logs.append(f"Row {i}: Sending employer profile {business_name}...")
-
-                try:
-                    status_code, response_text = post_to_api(
-                        token,
-                        payload,
-                        upload_type,
-                        USER_ENDPOINT,
-                        PROJECT_ENDPOINT,
-                        EMPLOYER_ENDPOINT,
-                    )
-                    if 200 <= status_code < 300:
-                        logs.append(f"Row {i}: ✅ Success (HTTP {status_code}).")
-                        success_count += 1
-                    else:
-                        logs.append(
-                            f"Row {i}: ❌ Failed (HTTP {status_code}). Response: {response_text}"
-                        )
-                        fail_count += 1
-                except Exception as e:
-                    logs.append(f"Row {i}: ❌ Error sending employer profile: {e}")
-                    fail_count += 1
-
-                progress_bar.progress(min(i / total_rows, 1.0))
-                log_area.text("\n".join(logs[-20:]))
-
-
-        # ------------- SUMMARY -------------
-        st.success("Upload complete.")
-        st.write(f"**Total rows processed:** {row_count}")
-        st.write(f"✅ Successful: {success_count}")
-        st.write(f"❌ Failed: {fail_count}")
-
-        with st.expander("View full log"):
-            st.text("\n".join(logs))
+    with st.expander("View full log"):
+        st.text("\n".join(logs))
