@@ -480,7 +480,7 @@ st.title("HammerTech Uploader")
 st.markdown(
     """
 Upload the combined Excel template, enter your HammerTech credentials and tenant, then
-choose which template sheets to process and upload.
+choose which template sheets to process and upload. Currently supports Users, Projects, Employer Profiles, and Workers.
 """
 )
 
