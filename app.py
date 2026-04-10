@@ -32,8 +32,9 @@ SHEET_CONFIG: Dict[str, Dict[str, str]] = {
         "label": "Users",
         "endpoint_key": "users",
         "description": (
-            "Expected columns: Email Address, Full Name, Phone, Job Title, "
-            "Internal Identifier, Demo Project ID"
+            "Expected columns: Email Address, Full Name, Phone, Job Title, Internal Identifier, "
+            "Demo Project ID, Project Admin, Individual Daily Report, "
+            "Daily Report Admin, Site Notifications, Confidential Data"
         ),
     },
     "Projects": {
@@ -194,15 +195,29 @@ def extract_created_id(payload: Any) -> Optional[str]:
     return None
 
 
+def _resolve_project_ids(raw_value: Any, all_project_ids: Optional[List[str]]) -> List[str]:
+    """Return a list of project IDs. 'All'/'ALL' expands to all_project_ids."""
+    if raw_value is None:
+        return []
+    if str(raw_value).strip().lower() == "all":
+        return all_project_ids or []
+    return [str(raw_value).strip()]
+
+
 def build_user_payload(
     row: tuple, all_project_ids: Optional[List[str]] = None
 ) -> Tuple[bool, dict]:
-    email_cell = row[0] if len(row) > 0 else None
-    name = row[1] if len(row) > 1 else None
-    mobile = row[2] if len(row) > 2 else None
-    title = row[3] if len(row) > 3 else None
-    internal_identifier = row[4] if len(row) > 4 else None
-    user_project_ids_raw = row[5] if len(row) > 5 else None
+    email_cell          = row[0]  if len(row) > 0  else None
+    name                = row[1]  if len(row) > 1  else None
+    mobile              = row[2]  if len(row) > 2  else None
+    title               = row[3]  if len(row) > 3  else None
+    internal_identifier = row[4]  if len(row) > 4  else None
+    user_project_ids_raw       = row[5]  if len(row) > 5  else None
+    project_admin_raw           = row[6]  if len(row) > 6  else None
+    individual_daily_report_raw = row[7]  if len(row) > 7  else None
+    daily_report_admin_raw      = row[8]  if len(row) > 8  else None
+    site_notifications_raw      = row[9]  if len(row) > 9  else None
+    confidential_data_raw       = row[10] if len(row) > 10 else None
 
     if email_cell is None:
         return False, {}
@@ -210,24 +225,36 @@ def build_user_payload(
     role_names = ["safetymanager"]
     is_admin = any(r.lower() == "admin" for r in role_names)
 
-    # Resolve project IDs — treat "All" / "ALL" (case-insensitive) as assign-to-all-projects,
-    # but skip that expansion for Admin users (they have implicit access).
+    # Main project access — "All" expands to every project (skipped for Admin).
     is_all = str(user_project_ids_raw).strip().lower() == "all" if user_project_ids_raw is not None else False
     if is_all and not is_admin:
         project_ids = all_project_ids or []
     elif user_project_ids_raw is not None and not is_all:
-        project_ids = [user_project_ids_raw]
+        project_ids = [str(user_project_ids_raw).strip()]
     else:
         project_ids = []
+
+    project_admin_ids   = _resolve_project_ids(project_admin_raw, all_project_ids)
+    ind_diary_ids       = _resolve_project_ids(individual_daily_report_raw, all_project_ids)
+    diary_admin_ids     = _resolve_project_ids(daily_report_admin_raw, all_project_ids)
+    site_notif_ids      = _resolve_project_ids(site_notifications_raw, all_project_ids)
+    confidential_ids    = _resolve_project_ids(confidential_data_raw, all_project_ids)
 
     payload = {
         "name": name or "",
         "title": title or "",
+        "mobileAreaCode": "1",
         "mobile": str(mobile) if mobile is not None else "",
         "email": email_cell or "",
         "internalIdentifier": str(internal_identifier) if internal_identifier is not None else "",
         "roleNames": role_names,
         "userProjectIds": project_ids,
+        "isAddToFutureProjects": is_all and not is_admin,
+        "isProjectAdminProjectIds": project_admin_ids,
+        "hasIndividualSiteDiaryProjectIds": ind_diary_ids,
+        "isSiteDiaryAdminProjectIds": diary_admin_ids,
+        "receiveSiteNotificationProjectIds": site_notif_ids,
+        "confidentialDataAccessProjectIds": confidential_ids,
     }
     return True, payload
 
