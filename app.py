@@ -115,8 +115,10 @@ def get_all_project_ids(token: str, projects_endpoint: str) -> List[str]:
             break
 
         for item in items:
-            if isinstance(item, dict) and item.get("id"):
-                all_ids.append(str(item["id"]))
+            if isinstance(item, dict):
+                project_id = item.get("projectId") or item.get("id")
+                if project_id:
+                    all_ids.append(str(project_id))
 
         if len(items) < take:
             break
