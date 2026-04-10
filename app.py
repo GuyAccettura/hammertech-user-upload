@@ -86,6 +86,45 @@ def post_to_api(token: str, payload: dict, endpoint: str) -> Tuple[int, str]:
     return response.status_code, response.text
 
 
+def get_all_project_ids(token: str, projects_endpoint: str) -> List[str]:
+    """Fetch all project IDs by paginating through the projects endpoint (take=100 per page)."""
+    headers = {
+        "Authorization": "Bearer " + token,
+        "accept": "application/json",
+    }
+    all_ids: List[str] = []
+    skip = 0
+    take = 100
+
+    while True:
+        response = requests.get(
+            projects_endpoint,
+            headers=headers,
+            params={"skip": skip, "take": take},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Handle both list responses and paginated object responses
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = data.get("items") or data.get("data") or data.get("results") or []
+        else:
+            break
+
+        for item in items:
+            if isinstance(item, dict) and item.get("id"):
+                all_ids.append(str(item["id"]))
+
+        if len(items) < take:
+            break
+        skip += take
+
+    return all_ids
+
+
 def post_json_to_api(token: str, payload: dict, endpoint: str) -> Tuple[int, Any]:
     headers = {
         "Authorization": "Bearer " + token,
@@ -153,16 +192,34 @@ def extract_created_id(payload: Any) -> Optional[str]:
     return None
 
 
-def build_user_payload(row: tuple) -> Tuple[bool, dict]:
+def build_user_payload(
+    row: tuple, all_project_ids: Optional[List[str]] = None
+) -> Tuple[bool, dict]:
     email_cell = row[0] if len(row) > 0 else None
     name = row[1] if len(row) > 1 else None
     mobile = row[2] if len(row) > 2 else None
     title = row[3] if len(row) > 3 else None
     internal_identifier = row[4] if len(row) > 4 else None
-    user_project_ids = row[5] if len(row) > 5 else None
+    user_project_ids_raw = row[5] if len(row) > 5 else None
 
     if email_cell is None:
         return False, {}
+
+    role_names = ["safetymanager"]
+    is_admin = any(r.lower() == "admin" for r in role_names)
+
+    # Resolve project IDs — treat "All" (case-insensitive) as assign-to-all-projects,
+    # but skip that expansion for Admin users (they have implicit access).
+    is_all = (
+        isinstance(user_project_ids_raw, str)
+        and user_project_ids_raw.strip().lower() == "all"
+    )
+    if is_all and not is_admin:
+        project_ids = all_project_ids or []
+    elif user_project_ids_raw is not None and not is_all:
+        project_ids = [user_project_ids_raw]
+    else:
+        project_ids = []
 
     payload = {
         "name": name or "",
@@ -170,8 +227,8 @@ def build_user_payload(row: tuple) -> Tuple[bool, dict]:
         "mobile": str(mobile) if mobile is not None else "",
         "email": email_cell or "",
         "internalIdentifier": str(internal_identifier) if internal_identifier is not None else "",
-        "roleNames": ["safetymanager"],
-        "userProjectIds": [user_project_ids] if user_project_ids is not None else [],
+        "roleNames": role_names,
+        "userProjectIds": project_ids,
     }
     return True, payload
 
@@ -321,6 +378,7 @@ def process_standard_sheet(
     progress_start: float,
     progress_span: float,
     logs: List[str],
+    projects_endpoint: Optional[str] = None,
 ) -> Dict[str, int]:
     sheet = workbook[sheet_name]
     rows = list(sheet.iter_rows(values_only=True))
@@ -329,6 +387,26 @@ def process_standard_sheet(
     processed = 0
     success = 0
     failed = 0
+
+    # For the Users sheet, check if any data row has "All" in the project column.
+    # If so, fetch all project IDs once up front (paginated).
+    all_project_ids: Optional[List[str]] = None
+    if sheet_name == "Users" and projects_endpoint:
+        needs_all = any(
+            len(row) > 5
+            and isinstance(row[5], str)
+            and row[5].strip().lower() == "all"
+            for row in rows[start_row - 1:]
+        )
+        if needs_all:
+            logs.append("Users: 'All' detected in project column — fetching all project IDs...")
+            log_area.text("\n".join(logs[-25:]))
+            try:
+                all_project_ids = get_all_project_ids(token, projects_endpoint)
+                logs.append(f"Users: Retrieved {len(all_project_ids)} project IDs.")
+            except Exception as exc:
+                logs.append(f"Users: Failed to fetch project IDs: {exc}")
+            log_area.text("\n".join(logs[-25:]))
 
     payload_builder_map = {
         "Users": build_user_payload,
@@ -344,7 +422,10 @@ def process_standard_sheet(
         if i < start_row:
             continue
 
-        should_send, payload = payload_builder(row)
+        if sheet_name == "Users":
+            should_send, payload = payload_builder(row, all_project_ids=all_project_ids)
+        else:
+            should_send, payload = payload_builder(row)
         if not should_send:
             current_progress = progress_start + progress_span * min(i / total_rows, 1.0)
             progress_bar.progress(min(current_progress, 1.0))
@@ -638,6 +719,7 @@ if run_button:
                 progress_start=progress_start,
                 progress_span=progress_span,
                 logs=logs,
+                projects_endpoint=ENDPOINTS["projects"] if sheet_name == "Users" else None,
             )
 
         overall_processed += sheet_result["processed"]
