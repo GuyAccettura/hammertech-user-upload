@@ -128,6 +128,46 @@ def get_all_project_ids(token: str, projects_endpoint: str) -> List[str]:
     return all_ids
 
 
+def get_all_region_ids(token: str, regions_endpoint: str) -> List[str]:
+    """Fetch all region IDs by paginating through the regions endpoint (take=100 per page)."""
+    headers = {
+        "Authorization": "Bearer " + token,
+        "accept": "application/json",
+    }
+    all_ids: List[str] = []
+    skip = 0
+    take = 100
+
+    while True:
+        response = requests.get(
+            regions_endpoint,
+            headers=headers,
+            params={"skip": skip, "take": take},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = data.get("items") or data.get("data") or data.get("results") or []
+        else:
+            break
+
+        for item in items:
+            if isinstance(item, dict):
+                region_id = item.get("regionId") or item.get("id")
+                if region_id:
+                    all_ids.append(str(region_id))
+
+        if len(items) < take:
+            break
+        skip += take
+
+    return all_ids
+
+
 def post_json_to_api(token: str, payload: dict, endpoint: str) -> Tuple[int, Any]:
     headers = {
         "Authorization": "Bearer " + token,
@@ -205,7 +245,9 @@ def _resolve_project_ids(raw_value: Any, all_project_ids: Optional[List[str]]) -
 
 
 def build_user_payload(
-    row: tuple, all_project_ids: Optional[List[str]] = None
+    row: tuple,
+    all_project_ids: Optional[List[str]] = None,
+    all_region_ids: Optional[List[str]] = None,
 ) -> Tuple[bool, dict]:
     email_cell          = row[0]  if len(row) > 0  else None
     name                = row[1]  if len(row) > 1  else None
@@ -234,11 +276,18 @@ def build_user_payload(
     else:
         project_ids = []
 
+    is_ind_diary_all    = str(individual_daily_report_raw).strip().lower() == "all" if individual_daily_report_raw is not None else False
+    is_diary_admin_all  = str(daily_report_admin_raw).strip().lower() == "all" if daily_report_admin_raw is not None else False
+    is_site_notif_all   = str(site_notifications_raw).strip().lower() == "all" if site_notifications_raw is not None else False
+    is_confidential_all = str(confidential_data_raw).strip().lower() == "all" if confidential_data_raw is not None else False
+
     project_admin_ids   = _resolve_project_ids(project_admin_raw, all_project_ids)
     ind_diary_ids       = _resolve_project_ids(individual_daily_report_raw, all_project_ids)
     diary_admin_ids     = _resolve_project_ids(daily_report_admin_raw, all_project_ids)
     site_notif_ids      = _resolve_project_ids(site_notifications_raw, all_project_ids)
     confidential_ids    = _resolve_project_ids(confidential_data_raw, all_project_ids)
+
+    all_regions = all_region_ids or []
 
     payload = {
         "name": name or "",
@@ -250,11 +299,17 @@ def build_user_payload(
         "roleNames": role_names,
         "userProjectIds": project_ids,
         "isAddToFutureProjects": is_all and not is_admin,
+        "isAddToFutureProjectsInOtherRegions": is_all and not is_admin,
+        "addUserToFutureProjectsInRegionIds": all_regions if is_all and not is_admin else [],
         "isProjectAdminProjectIds": project_admin_ids,
         "hasIndividualSiteDiaryProjectIds": ind_diary_ids,
+        "hasIndividualSiteDiaryFutureProjectsInRegionIds": all_regions if is_ind_diary_all else [],
         "isSiteDiaryAdminProjectIds": diary_admin_ids,
+        "isSiteDiaryAdminFutureProjectsInRegionIds": all_regions if is_diary_admin_all else [],
         "receiveSiteNotificationProjectIds": site_notif_ids,
+        "receiveSiteNotificationFutureProjectsInRegionIds": all_regions if is_site_notif_all else [],
         "confidentialDataAccessProjectIds": confidential_ids,
+        "confidentialDataAccessFutureProjectsInRegionIds": all_regions if is_confidential_all else [],
     }
     return True, payload
 
@@ -405,6 +460,7 @@ def process_standard_sheet(
     progress_span: float,
     logs: List[str],
     projects_endpoint: Optional[str] = None,
+    regions_endpoint: Optional[str] = None,
 ) -> Dict[str, int]:
     sheet = workbook[sheet_name]
     rows = list(sheet.iter_rows(values_only=True))
@@ -414,18 +470,28 @@ def process_standard_sheet(
     success = 0
     failed = 0
 
-    # For the Users sheet, fetch all project IDs once up front so any row that
-    # has "All" (case-insensitive) in the project column can be expanded at row-build time.
+    # For the Users sheet, fetch all project IDs and region IDs up front.
     all_project_ids: Optional[List[str]] = None
-    if sheet_name == "Users" and projects_endpoint:
-        logs.append("Users: Fetching all project IDs for potential 'All' assignments...")
-        log_area.text("\n".join(logs[-25:]))
-        try:
-            all_project_ids = get_all_project_ids(token, projects_endpoint)
-            logs.append(f"Users: Retrieved {len(all_project_ids)} project IDs.")
-        except Exception as exc:
-            logs.append(f"Users: Failed to fetch project IDs: {exc}")
-        log_area.text("\n".join(logs[-25:]))
+    all_region_ids: Optional[List[str]] = None
+    if sheet_name == "Users":
+        if projects_endpoint:
+            logs.append("Users: Fetching all project IDs for potential 'All' assignments...")
+            log_area.text("\n".join(logs[-25:]))
+            try:
+                all_project_ids = get_all_project_ids(token, projects_endpoint)
+                logs.append(f"Users: Retrieved {len(all_project_ids)} project IDs.")
+            except Exception as exc:
+                logs.append(f"Users: Failed to fetch project IDs: {exc}")
+            log_area.text("\n".join(logs[-25:]))
+        if regions_endpoint:
+            logs.append("Users: Fetching all region IDs for potential 'All' future assignments...")
+            log_area.text("\n".join(logs[-25:]))
+            try:
+                all_region_ids = get_all_region_ids(token, regions_endpoint)
+                logs.append(f"Users: Retrieved {len(all_region_ids)} region IDs.")
+            except Exception as exc:
+                logs.append(f"Users: Failed to fetch region IDs: {exc}")
+            log_area.text("\n".join(logs[-25:]))
 
     payload_builder_map = {
         "Users": build_user_payload,
@@ -442,7 +508,7 @@ def process_standard_sheet(
             continue
 
         if sheet_name == "Users":
-            should_send, payload = payload_builder(row, all_project_ids=all_project_ids)
+            should_send, payload = payload_builder(row, all_project_ids=all_project_ids, all_region_ids=all_region_ids)
         else:
             should_send, payload = payload_builder(row)
         if not should_send:
@@ -595,6 +661,7 @@ auth_endpoint, api_base = get_endpoints(region)
 ENDPOINTS = {
     "users": f"{api_base}/users",
     "projects": f"{api_base}/projects",
+    "regions": f"{api_base}/regions",
     "employer_profiles": f"{api_base}/EmployerProfiles",
     "worker_profiles": f"{api_base}/WorkerProfiles",
     "workers": f"{api_base}/workers",
@@ -739,6 +806,7 @@ if run_button:
                 progress_span=progress_span,
                 logs=logs,
                 projects_endpoint=ENDPOINTS["projects"] if sheet_name == "Users" else None,
+                regions_endpoint=ENDPOINTS["regions"] if sheet_name == "Users" else None,
             )
 
         overall_processed += sheet_result["processed"]

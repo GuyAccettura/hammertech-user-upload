@@ -6,7 +6,7 @@ Run with: python test_all_projects.py
 import requests
 import openpyxl
 import io
-from app import get_token, get_all_project_ids, get_endpoints, build_user_payload
+from app import get_token, get_all_project_ids, get_all_region_ids, get_endpoints, build_user_payload
 
 # ── Fill these in ──────────────────────────────────────────────────────────────
 REGION   = "North America"
@@ -41,6 +41,26 @@ except Exception as e:
     print(f"  FAILED: {e}")
     raise SystemExit(1)
 
+# Step 2b — fetch all region IDs
+regions_endpoint = f"{api_base}/regions"
+print("\nFetching ALL region IDs (raw first page)...")
+headers = {"Authorization": "Bearer " + token, "accept": "application/json"}
+resp = requests.get(regions_endpoint, headers=headers, params={"skip": 0, "take": 5}, timeout=60)
+print(f"  HTTP {resp.status_code}")
+print(f"  Response (truncated): {resp.text[:300]}")
+
+print("\nFetching ALL region IDs via get_all_region_ids()...")
+try:
+    all_region_ids = get_all_region_ids(token, regions_endpoint)
+    print(f"  Retrieved {len(all_region_ids)} region IDs.")
+    if all_region_ids:
+        print(f"  First 5: {all_region_ids[:5]}")
+    else:
+        print("  WARNING: empty — check raw response shape above.")
+except Exception as e:
+    print(f"  FAILED: {e}")
+    raise SystemExit(1)
+
 # Step 3 — inspect the Excel cell values and built payload
 print(f"\nReading Excel file: {EXCEL_PATH}")
 try:
@@ -55,9 +75,26 @@ try:
         print(f"    Col F raw value : {raw_project_val!r}  (type: {type(raw_project_val).__name__})")
         is_all = str(raw_project_val).strip().lower() == "all" if raw_project_val is not None else False
         print(f"    is_all          : {is_all}")
-        _, payload = build_user_payload(row, all_project_ids=all_ids)
-        print(f"    isAddToFutureProjects : {payload.get('isAddToFutureProjects')}")
-        print(f"    userProjectIds count  : {len(payload.get('userProjectIds', []))}")
+        _, payload = build_user_payload(row, all_project_ids=all_ids, all_region_ids=all_region_ids)
+        print(f"    isAddToFutureProjects                        : {payload.get('isAddToFutureProjects')}")
+        print(f"    userProjectIds count                         : {len(payload.get('userProjectIds', []))}")
+        print(f"    addUserToFutureProjectsInRegionIds count     : {len(payload.get('addUserToFutureProjectsInRegionIds', []))}")
+        print(f"    hasIndividualSiteDiaryFutureProjectsInRegionIds count : {len(payload.get('hasIndividualSiteDiaryFutureProjectsInRegionIds', []))}")
+        print(f"    isSiteDiaryAdminFutureProjectsInRegionIds count      : {len(payload.get('isSiteDiaryAdminFutureProjectsInRegionIds', []))}")
+        print(f"    receiveSiteNotificationFutureProjectsInRegionIds count: {len(payload.get('receiveSiteNotificationFutureProjectsInRegionIds', []))}")
+        print(f"    confidentialDataAccessFutureProjectsInRegionIds count : {len(payload.get('confidentialDataAccessFutureProjectsInRegionIds', []))}")
+
+        # Actually POST the user and print the full response
+        print(f"    POSTing user to API...")
+        import json
+        headers = {
+            "Authorization": "Bearer " + token,
+            "accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        resp = requests.post(f"{api_base}/users", headers=headers, json=payload, timeout=60)
+        print(f"    HTTP {resp.status_code}")
+        print(f"    Response: {resp.text[:1000]}")
 except FileNotFoundError:
     print(f"  File not found: {EXCEL_PATH} — update EXCEL_PATH in this script.")
 except Exception as e:
