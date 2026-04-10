@@ -208,12 +208,9 @@ def build_user_payload(
     role_names = ["safetymanager"]
     is_admin = any(r.lower() == "admin" for r in role_names)
 
-    # Resolve project IDs — treat "All" (case-insensitive) as assign-to-all-projects,
+    # Resolve project IDs — treat "All" / "ALL" (case-insensitive) as assign-to-all-projects,
     # but skip that expansion for Admin users (they have implicit access).
-    is_all = (
-        isinstance(user_project_ids_raw, str)
-        and user_project_ids_raw.strip().lower() == "all"
-    )
+    is_all = str(user_project_ids_raw).strip().lower() == "all" if user_project_ids_raw is not None else False
     if is_all and not is_admin:
         project_ids = all_project_ids or []
     elif user_project_ids_raw is not None and not is_all:
@@ -388,25 +385,18 @@ def process_standard_sheet(
     success = 0
     failed = 0
 
-    # For the Users sheet, check if any data row has "All" in the project column.
-    # If so, fetch all project IDs once up front (paginated).
+    # For the Users sheet, fetch all project IDs once up front so any row that
+    # has "All" (case-insensitive) in the project column can be expanded at row-build time.
     all_project_ids: Optional[List[str]] = None
     if sheet_name == "Users" and projects_endpoint:
-        needs_all = any(
-            len(row) > 5
-            and isinstance(row[5], str)
-            and row[5].strip().lower() == "all"
-            for row in rows[start_row - 1:]
-        )
-        if needs_all:
-            logs.append("Users: 'All' detected in project column — fetching all project IDs...")
-            log_area.text("\n".join(logs[-25:]))
-            try:
-                all_project_ids = get_all_project_ids(token, projects_endpoint)
-                logs.append(f"Users: Retrieved {len(all_project_ids)} project IDs.")
-            except Exception as exc:
-                logs.append(f"Users: Failed to fetch project IDs: {exc}")
-            log_area.text("\n".join(logs[-25:]))
+        logs.append("Users: Fetching all project IDs for potential 'All' assignments...")
+        log_area.text("\n".join(logs[-25:]))
+        try:
+            all_project_ids = get_all_project_ids(token, projects_endpoint)
+            logs.append(f"Users: Retrieved {len(all_project_ids)} project IDs.")
+        except Exception as exc:
+            logs.append(f"Users: Failed to fetch project IDs: {exc}")
+        log_area.text("\n".join(logs[-25:]))
 
     payload_builder_map = {
         "Users": build_user_payload,
