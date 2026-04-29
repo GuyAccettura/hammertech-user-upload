@@ -58,7 +58,7 @@ SHEET_CONFIG: Dict[str, Dict[str, str]] = {
         "endpoint_key": "workers",
         "description": (
             "Expected columns: First Name, Last Name, Job Title, Job Title ID, DOB, "
-            "Street Address, Suburb, Postcode, State, Country, Internal Id, Project ID, Employer ID"
+            "Street Address, Suburb, Postcode, State, Country, Internal Id, Project ID, Employer ID, Mobile"
         ),
     },
 }
@@ -402,6 +402,7 @@ def build_worker_profile_payload(row: tuple) -> Tuple[bool, dict]:
     internal_id = row[10] if len(row) > 10 else None
     project_id = row[11] if len(row) > 11 else None
     employer_id = row[12] if len(row) > 12 else None
+    mobile = row[13] if len(row) > 13 else None
 
     if not any([
         first_name,
@@ -432,6 +433,7 @@ def build_worker_profile_payload(row: tuple) -> Tuple[bool, dict]:
         "state": str(state).strip() if state is not None else "",
         "country": str(country).strip() if country is not None else "",
         "internalIdentifier": str(internal_id).strip() if internal_id is not None else "",
+        "mobile": str(mobile).strip() if mobile is not None else "",
         "preferredCommunicationLanguage": DEFAULT_LANGUAGE,
     }
     profile_payload = {k: v for k, v in profile_payload.items() if v not in (None, "")}
